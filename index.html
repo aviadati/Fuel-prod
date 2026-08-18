@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>מד דלק</title>
+<meta name="theme-color" content="#09090b" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="מד דלק" />
+<link rel="manifest" href="manifest.json" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<link rel="icon" href="icon-192.png" />
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #09090b; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type=number] { -moz-appearance: textfield; }
+  ::selection { background: #f59e0b55; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script>
+const {
+  useState,
+  useEffect,
+  useMemo
+} = React;
+const HEB_MONTHS = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
+const STORAGE_KEY = "fuel-entries-v1";
+function monthKey(dateStr) {
+  const d = new Date(dateStr);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function monthLabel(key) {
+  const [y, m] = key.split("-").map(Number);
+  return `${HEB_MONTHS[m - 1]} ${y}`;
+}
+function formatDate(dateStr) {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString("he-IL", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric"
+  });
+}
+function loadEntries() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+function saveEntries(entries) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+}
+function Icon({
+  name,
+  size = 16,
+  className = ""
+}) {
+  const common = {
+    width: size,
+    height: size,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    className
+  };
+  if (name === "fuel") return /*#__PURE__*/React.createElement("svg", common, /*#__PURE__*/React.createElement("line", {
+    x1: "3",
+    y1: "22",
+    x2: "15",
+    y2: "22"
+  }), /*#__PURE__*/React.createElement("line", {
+    x1: "4",
+    y1: "9",
+    x2: "14",
+    y2: "9"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M4 22V4a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v18"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M14 13h2a2 2 0 0 1 2 2v2a2 2 0 0 0 2 2 2 2 0 0 0 2-2V9.83a2 2 0 0 0-.59-1.42L18 5"
+  }));
+  if (name === "gauge") return /*#__PURE__*/React.createElement("svg", common, /*#__PURE__*/React.createElement("path", {
+    d: "m12 14 4-4"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M3.34 19a10 10 0 1 1 17.32 0"
+  }));
+  if (name === "plus") return /*#__PURE__*/React.createElement("svg", common, /*#__PURE__*/React.createElement("path", {
+    d: "M5 12h14"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M12 5v14"
+  }));
+  if (name === "trash") return /*#__PURE__*/React.createElement("svg", common, /*#__PURE__*/React.createElement("path", {
+    d: "M3 6h18"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"
+  }));
+  if (name === "chevronDown") return /*#__PURE__*/React.createElement("svg", common, /*#__PURE__*/React.createElement("path", {
+    d: "m6 9 6 6 6-6"
+  }));
+  if (name === "chevronUp") return /*#__PURE__*/React.createElement("svg", common, /*#__PURE__*/React.createElement("path", {
+    d: "m18 15-6-6-6 6"
+  }));
+  if (name === "download") return /*#__PURE__*/React.createElement("svg", common, /*#__PURE__*/React.createElement("path", {
+    d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+  }), /*#__PURE__*/React.createElement("polyline", {
+    points: "7 10 12 15 17 10"
+  }), /*#__PURE__*/React.createElement("line", {
+    x1: "12",
+    y1: "15",
+    x2: "12",
+    y2: "3"
+  }));
+  if (name === "upload") return /*#__PURE__*/React.createElement("svg", common, /*#__PURE__*/React.createElement("path", {
+    d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"
+  }), /*#__PURE__*/React.createElement("polyline", {
+    points: "17 8 12 3 7 8"
+  }), /*#__PURE__*/React.createElement("line", {
+    x1: "12",
+    y1: "3",
+    x2: "12",
+    y2: "15"
+  }));
+  return null;
+}
+function FuelTracker() {
+  const [entries, setEntries] = useState(() => loadEntries());
+  const [odometer, setOdometer] = useState("");
+  const [liters, setLiters] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [openMonths, setOpenMonths] = useState({});
+  const fileInputRef = React.useRef(null);
+  const sorted = useMemo(() => [...entries].sort((a, b) => a.odometer - b.odometer), [entries]);
+  const withDistance = useMemo(() => sorted.map((e, i) => ({
+    ...e,
+    distance: i === 0 ? 0 : e.odometer - sorted[i - 1].odometer
+  })), [sorted]);
+  const byMonth = useMemo(() => {
+    const map = {};
+    for (const e of withDistance) {
+      const key = monthKey(e.date);
+      if (!map[key]) map[key] = {
+        liters: 0,
+        distance: 0,
+        entries: []
+      };
+      map[key].liters += e.liters;
+      map[key].distance += e.distance;
+      map[key].entries.push(e);
+    }
+    return map;
+  }, [withDistance]);
+  const monthKeys = useMemo(() => Object.keys(byMonth).sort((a, b) => a < b ? 1 : -1), [byMonth]);
+  const currentKey = monthKey(new Date().toISOString());
+  const current = byMonth[currentKey] || {
+    liters: 0,
+    distance: 0,
+    entries: []
+  };
+  const efficiency = current.liters > 0 ? current.distance / current.liters : 0;
+  const lastOdometer = sorted.length ? sorted[sorted.length - 1].odometer : null;
+  const persist = next => {
+    setEntries(next);
+    try {
+      saveEntries(next);
+      setError("");
+      setNotice("נשמר ✓");
+      setTimeout(() => setNotice(""), 1800);
+    } catch (e) {
+      setError("השמירה נכשלה: " + (e && e.message ? e.message : "שגיאה לא ידועה"));
+    }
+  };
+  const handleSubmit = () => {
+    setError("");
+    const odoNum = parseFloat(odometer);
+    const litNum = parseFloat(liters);
+    if (!odometer || !liters || isNaN(odoNum) || isNaN(litNum)) {
+      setError('יש למלא ק"מ וליטרים כמספרים תקינים.');
+      return;
+    }
+    if (litNum <= 0) {
+      setError("כמות הליטרים חייבת להיות גדולה מאפס.");
+      return;
+    }
+    if (lastOdometer !== null && odoNum <= lastOdometer) {
+      setError(`הק"מ חייב להיות גדול מהתדלוק הקודם (${lastOdometer.toLocaleString("he-IL")} ק"מ).`);
+      return;
+    }
+    const next = [...entries, {
+      id: `${Date.now()}`,
+      date: new Date().toISOString(),
+      odometer: odoNum,
+      liters: litNum
+    }];
+    persist(next);
+    setOdometer("");
+    setLiters("");
+  };
+  const handleDelete = id => persist(entries.filter(e => e.id !== id));
+  const toggleMonth = key => setOpenMonths(p => ({
+    ...p,
+    [key]: !p[key]
+  }));
+  const handleExport = () => {
+    const blob = new Blob([JSON.stringify(entries, null, 2)], {
+      type: "application/json"
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `fuel-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  const handleImportClick = () => fileInputRef.current && fileInputRef.current.click();
+  const handleImportFile = ev => {
+    const file = ev.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const imported = JSON.parse(reader.result);
+        if (!Array.isArray(imported)) throw new Error("קובץ לא תקין");
+        const byId = {};
+        [...entries, ...imported].forEach(e => {
+          byId[e.id] = e;
+        });
+        persist(Object.values(byId));
+      } catch (e) {
+        setError("ייבוא נכשל: הקובץ אינו בפורמט תקין.");
+      }
+    };
+    reader.readAsText(file);
+    ev.target.value = "";
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      minHeight: "100vh",
+      background: "#09090b",
+      color: "#f4f4f5",
+      padding: "24px 16px 48px"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxWidth: 420,
+      margin: "0 auto",
+      display: "flex",
+      flexDirection: "column",
+      gap: 20
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "#f59e0b",
+      borderRadius: 14,
+      padding: 10,
+      flexShrink: 0
+    }
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "gauge",
+    size: 22,
+    className: ""
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("h1", {
+    style: {
+      fontSize: 20,
+      fontWeight: 700,
+      margin: 0,
+      color: "#fafafa"
+    }
+  }, "\u05DE\u05D3 \u05D3\u05DC\u05E7"), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 12,
+      color: "#71717a",
+      margin: "2px 0 0"
+    }
+  }, "\u05DE\u05E2\u05E7\u05D1 \u05EA\u05D3\u05DC\u05D5\u05E7\u05D9\u05DD \u05D5\u05E6\u05E8\u05D9\u05DB\u05EA \u05D3\u05DC\u05E7 \u05D7\u05D5\u05D3\u05E9\u05D9\u05EA"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "#000",
+      borderRadius: 18,
+      border: "1px solid #27272a",
+      padding: 20
+    }
+  }, /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 11,
+      color: "#f59e0bcc",
+      letterSpacing: 2,
+      margin: "0 0 12px"
+    }
+  }, monthLabel(currentKey)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 10,
+      color: "#71717a",
+      margin: "0 0 4px"
+    }
+  }, "\u05E7\u05F4\u05DE \u05E9\u05E0\u05E1\u05E2\u05EA\u05D9"), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontFamily: "ui-monospace, monospace",
+      fontSize: 26,
+      color: "#fbbf24",
+      margin: 0,
+      fontVariantNumeric: "tabular-nums"
+    }
+  }, current.distance.toLocaleString("he-IL"))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 10,
+      color: "#71717a",
+      margin: "0 0 4px"
+    }
+  }, "\u05DC\u05D9\u05D8\u05E8\u05D9\u05DD \u05E9\u05EA\u05D5\u05D3\u05DC\u05E7\u05D5"), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontFamily: "ui-monospace, monospace",
+      fontSize: 26,
+      color: "#fbbf24",
+      margin: 0,
+      fontVariantNumeric: "tabular-nums"
+    }
+  }, current.liters.toLocaleString("he-IL")))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 16,
+      paddingTop: 16,
+      borderTop: "1px solid #27272a",
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "center"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      color: "#71717a"
+    }
+  }, "\u05D9\u05E2\u05D9\u05DC\u05D5\u05EA \u05DE\u05DE\u05D5\u05E6\u05E2\u05EA"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontFamily: "ui-monospace, monospace",
+      fontSize: 13,
+      color: efficiency === 0 ? "#52525b" : efficiency >= 12 ? "#34d399" : "#fb7185"
+    }
+  }, efficiency > 0 ? `${efficiency.toFixed(1)} ק"מ / ליטר` : "אין עדיין נתונים"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "#18181b",
+      border: "1px solid #27272a",
+      borderRadius: 18,
+      padding: 20,
+      display: "flex",
+      flexDirection: "column",
+      gap: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "fuel",
+    size: 16,
+    className: ""
+  }), /*#__PURE__*/React.createElement("h2", {
+    style: {
+      fontSize: 14,
+      fontWeight: 600,
+      margin: 0,
+      color: "#e4e4e7"
+    }
+  }, "\u05EA\u05D3\u05DC\u05D5\u05E7 \u05D7\u05D3\u05E9")), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: "block",
+      fontSize: 11,
+      color: "#71717a",
+      marginBottom: 4
+    }
+  }, "\u05E7\u05E8\u05D9\u05D0\u05EA \u05E7\u05F4\u05DE \u05E0\u05D5\u05DB\u05D7\u05D9\u05EA ", lastOdometer !== null && `(אחרון: ${lastOdometer.toLocaleString("he-IL")})`), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    inputMode: "decimal",
+    value: odometer,
+    onChange: e => setOdometer(e.target.value),
+    onKeyDown: e => e.key === "Enter" && handleSubmit(),
+    placeholder: "\u05DC\u05D3\u05D5\u05D2\u05DE\u05D4: 45210",
+    style: inputStyle
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: "block",
+      fontSize: 11,
+      color: "#71717a",
+      marginBottom: 4
+    }
+  }, "\u05DC\u05D9\u05D8\u05E8\u05D9\u05DD \u05E9\u05EA\u05D5\u05D3\u05DC\u05E7\u05D5"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    inputMode: "decimal",
+    value: liters,
+    onChange: e => setLiters(e.target.value),
+    onKeyDown: e => e.key === "Enter" && handleSubmit(),
+    placeholder: "\u05DC\u05D3\u05D5\u05D2\u05DE\u05D4: 42.5",
+    style: inputStyle
+  })), error && /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 12,
+      color: "#fb7185",
+      margin: 0
+    }
+  }, error), notice && /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 12,
+      color: "#34d399",
+      margin: 0
+    }
+  }, notice), /*#__PURE__*/React.createElement("button", {
+    onClick: handleSubmit,
+    style: buttonStyle
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "plus",
+    size: 16,
+    className: ""
+  }), " \u05E9\u05DE\u05D5\u05E8 \u05EA\u05D3\u05DC\u05D5\u05E7")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("h2", {
+    style: {
+      fontSize: 14,
+      fontWeight: 600,
+      color: "#a1a1aa",
+      margin: "0 0 0 4px"
+    }
+  }, "\u05D4\u05D9\u05E1\u05D8\u05D5\u05E8\u05D9\u05D4 \u05D7\u05D5\u05D3\u05E9\u05D9\u05EA"), monthKeys.length === 0 && /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 12,
+      color: "#52525b",
+      margin: "0 0 0 4px"
+    }
+  }, "\u05E2\u05D3\u05D9\u05D9\u05DF \u05D0\u05D9\u05DF \u05EA\u05D3\u05DC\u05D5\u05E7\u05D9\u05DD \u05E9\u05DE\u05D5\u05E8\u05D9\u05DD."), monthKeys.map(key => {
+    const m = byMonth[key];
+    const eff = m.liters > 0 ? m.distance / m.liters : 0;
+    const isOpen = !!openMonths[key];
+    return /*#__PURE__*/React.createElement("div", {
+      key: key,
+      style: {
+        background: "#18181b",
+        border: "1px solid #27272a",
+        borderRadius: 18,
+        overflow: "hidden"
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => toggleMonth(key),
+      style: {
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        background: "none",
+        border: "none",
+        padding: "12px 16px",
+        cursor: "pointer"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: "right"
+      }
+    }, /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 14,
+        fontWeight: 500,
+        color: "#e4e4e7",
+        margin: 0
+      }
+    }, monthLabel(key)), /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 12,
+        color: "#71717a",
+        margin: "2px 0 0"
+      }
+    }, m.distance.toLocaleString("he-IL"), " \u05E7\u05F4\u05DE \xB7 ", m.liters.toLocaleString("he-IL"), " \u05DC\u05D9\u05D8\u05E8", eff > 0 && ` · ${eff.toFixed(1)} ק"מ/ל`)), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: "#71717a"
+      }
+    }, /*#__PURE__*/React.createElement(Icon, {
+      name: isOpen ? "chevronUp" : "chevronDown",
+      size: 16,
+      className: ""
+    }))), isOpen && /*#__PURE__*/React.createElement("div", {
+      style: {
+        borderTop: "1px solid #27272a"
+      }
+    }, m.entries.slice().reverse().map(e => /*#__PURE__*/React.createElement("div", {
+      key: e.id,
+      style: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "10px 16px",
+        borderTop: "1px solid #27272a"
+      }
+    }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 12,
+        color: "#d4d4d8",
+        margin: 0
+      }
+    }, formatDate(e.date)), /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 11,
+        color: "#71717a",
+        margin: "2px 0 0"
+      }
+    }, e.odometer.toLocaleString("he-IL"), " \u05E7\u05F4\u05DE \xB7 ", e.liters, " \u05DC\u05D9\u05D8\u05E8", e.distance > 0 && ` · נסע ${e.distance.toLocaleString("he-IL")} ק"מ`)), /*#__PURE__*/React.createElement("button", {
+      onClick: () => handleDelete(e.id),
+      style: {
+        background: "none",
+        border: "none",
+        color: "#52525b",
+        cursor: "pointer",
+        padding: 6
+      }
+    }, /*#__PURE__*/React.createElement(Icon, {
+      name: "trash",
+      size: 14,
+      className: ""
+    }))))));
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: handleExport,
+    style: secondaryButtonStyle
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "download",
+    size: 14,
+    className: ""
+  }), " \u05D2\u05D9\u05D1\u05D5\u05D9 (\u05D9\u05D9\u05E6\u05D5\u05D0)"), /*#__PURE__*/React.createElement("button", {
+    onClick: handleImportClick,
+    style: secondaryButtonStyle
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "upload",
+    size: 14,
+    className: ""
+  }), " \u05E9\u05D7\u05D6\u05D5\u05E8 (\u05D9\u05D9\u05D1\u05D5\u05D0)"), /*#__PURE__*/React.createElement("input", {
+    ref: fileInputRef,
+    type: "file",
+    accept: "application/json",
+    onChange: handleImportFile,
+    style: {
+      display: "none"
+    }
+  })), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 11,
+      color: "#52525b",
+      textAlign: "center",
+      margin: 0
+    }
+  }, "\u05D4\u05E0\u05EA\u05D5\u05E0\u05D9\u05DD \u05E0\u05E9\u05DE\u05E8\u05D9\u05DD \u05E8\u05E7 \u05E2\u05DC \u05D4\u05DE\u05DB\u05E9\u05D9\u05E8 \u05D4\u05D6\u05D4. \u05D0\u05E4\u05E9\u05E8 \u05DC\u05D2\u05D1\u05D5\u05EA \u05D5\u05DC\u05E9\u05D7\u05D6\u05E8 \u05D1\u05D9\u05DF \u05DE\u05DB\u05E9\u05D9\u05E8\u05D9\u05DD \u05D3\u05E8\u05DA \u05D4\u05DB\u05E4\u05EA\u05D5\u05E8\u05D9\u05DD \u05DC\u05DE\u05E2\u05DC\u05D4.")));
+}
+const inputStyle = {
+  width: "100%",
+  background: "#09090b",
+  border: "1px solid #3f3f46",
+  borderRadius: 12,
+  padding: "10px 12px",
+  fontSize: 14,
+  color: "#f4f4f5",
+  outline: "none"
+};
+const buttonStyle = {
+  width: "100%",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 8,
+  background: "#f59e0b",
+  color: "#09090b",
+  fontWeight: 600,
+  fontSize: 14,
+  border: "none",
+  borderRadius: 12,
+  padding: "12px 0",
+  cursor: "pointer"
+};
+const secondaryButtonStyle = {
+  flex: 1,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 6,
+  background: "#18181b",
+  color: "#a1a1aa",
+  fontWeight: 500,
+  fontSize: 12,
+  border: "1px solid #27272a",
+  borderRadius: 12,
+  padding: "10px 0",
+  cursor: "pointer"
+};
+ReactDOM.createRoot(document.getElementById("root")).render(/*#__PURE__*/React.createElement(FuelTracker, null));
+
+</script>
+
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("sw.js").catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>
