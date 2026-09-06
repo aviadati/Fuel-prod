@@ -1,11 +1,16 @@
-const CACHE_NAME = "fuel-tracker-v2";
+const CACHE_NAME = "fuel-tracker-v4";
 const ASSETS = ["./", "./index.html", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)).catch(() => {})
   );
-  self.skipWaiting();
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener("activate", (event) => {
@@ -20,14 +25,18 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
-  // Network-first for navigation/HTML requests, so updates show up immediately.
-  const isNavigation =
+  const url = new URL(event.request.url);
+  const isHtmlLike =
     event.request.mode === "navigate" ||
-    (event.request.headers.get("accept") || "").includes("text/html");
+    (event.request.headers.get("accept") || "").includes("text/html") ||
+    url.pathname.endsWith("/index.html") ||
+    url.pathname.endsWith("/");
 
-  if (isNavigation) {
+  if (isHtmlLike) {
+    // Network-first: always try to get the freshest index.html, including
+    // for the in-app "check for updates" fetch — not just full page loads.
     event.respondWith(
-      fetch(event.request)
+      fetch(event.request, { cache: "no-store" })
         .then((res) => {
           const resClone = res.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, resClone));
@@ -38,7 +47,6 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Cache-first for static assets (icons, manifest).
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;

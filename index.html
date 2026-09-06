@@ -28,6 +28,7 @@
 </style>
 </head>
 <body>
+<script>window.__APP_VERSION__ = "2026-08-27T13:49:04Z";</script>
 <div id="root"></div>
 
 <script>
@@ -37,7 +38,11 @@ const {
   useMemo
 } = React;
 const HEB_MONTHS = ["ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
-const STORAGE_KEY = "fuel-entries-v1";
+const ENTRIES_KEY = "fuel-entries-v1";
+const VEHICLES_KEY = "fuel-vehicles-v1";
+const ACTIVE_VEHICLE_KEY = "fuel-active-vehicle-v1";
+const DEFAULT_INTERVAL = 10000;
+const APP_SEMVER = "1.5.0";
 function monthKey(dateStr) {
   const d = new Date(dateStr);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -56,7 +61,7 @@ function formatDate(dateStr) {
 }
 function loadEntries() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(ENTRIES_KEY);
     const parsed = raw ? JSON.parse(raw) : [];
     return Array.isArray(parsed) ? parsed : [];
   } catch (e) {
@@ -64,7 +69,63 @@ function loadEntries() {
   }
 }
 function saveEntries(entries) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+  localStorage.setItem(ENTRIES_KEY, JSON.stringify(entries));
+}
+function loadVehicles() {
+  try {
+    const raw = localStorage.getItem(VEHICLES_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+function saveVehicles(vehicles) {
+  localStorage.setItem(VEHICLES_KEY, JSON.stringify(vehicles));
+}
+
+// One-time migration: ensure there is always at least one vehicle, and every
+// entry has a vehicleId (older data created before multi-vehicle support).
+function migrate() {
+  let vehicles = loadVehicles();
+  let entries = loadEntries();
+  let changed = false;
+  if (vehicles.length === 0) {
+    // Default the "last service" baseline to the highest known odometer reading
+    // (i.e. assume the car is fine right now), instead of 0 which would
+    // incorrectly show the car as overdue for service from day one.
+    const knownMax = entries.reduce((max, e) => Math.max(max, e.odometer || 0), 0);
+    vehicles = [{
+      id: "v1",
+      name: "רכב 1",
+      serviceIntervalKm: DEFAULT_INTERVAL,
+      lastServiceOdometer: knownMax
+    }];
+    changed = true;
+  }
+  const defaultVehicleId = vehicles[0].id;
+  const fixedEntries = entries.map(e => e.vehicleId ? e : {
+    ...e,
+    vehicleId: defaultVehicleId
+  });
+  if (JSON.stringify(fixedEntries) !== JSON.stringify(entries)) {
+    entries = fixedEntries;
+    changed = true;
+  }
+  if (changed) {
+    saveVehicles(vehicles);
+    saveEntries(entries);
+  }
+  let activeId = localStorage.getItem(ACTIVE_VEHICLE_KEY);
+  if (!activeId || !vehicles.some(v => v.id === activeId)) {
+    activeId = vehicles[0].id;
+    localStorage.setItem(ACTIVE_VEHICLE_KEY, activeId);
+  }
+  return {
+    vehicles,
+    entries,
+    activeId
+  };
 }
 function Icon({
   name,
@@ -138,10 +199,560 @@ function Icon({
     x2: "12",
     y2: "15"
   }));
+  if (name === "wrench") return /*#__PURE__*/React.createElement("svg", common, /*#__PURE__*/React.createElement("path", {
+    d: "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
+  }));
+  if (name === "car") return /*#__PURE__*/React.createElement("svg", common, /*#__PURE__*/React.createElement("path", {
+    d: "M19 17h2v-4.5a1.5 1.5 0 0 0-.3-.9L18 7H6L3.3 11.6a1.5 1.5 0 0 0-.3.9V17h2"
+  }), /*#__PURE__*/React.createElement("circle", {
+    cx: "7",
+    cy: "17",
+    r: "2"
+  }), /*#__PURE__*/React.createElement("circle", {
+    cx: "17",
+    cy: "17",
+    r: "2"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M5 17h2m10 0h2M9 17h6"
+  }));
   return null;
 }
+function VehicleSwitcher({
+  vehicles,
+  activeId,
+  onSelect,
+  onAdd,
+  onDelete
+}) {
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [currentKm, setCurrentKm] = useState("");
+  const [lastServiceKm, setLastServiceKm] = useState("");
+  const [interval, setIntervalVal] = useState(String(DEFAULT_INTERVAL));
+  const resetForm = () => {
+    setName("");
+    setCurrentKm("");
+    setLastServiceKm("");
+    setIntervalVal(String(DEFAULT_INTERVAL));
+    setAdding(false);
+  };
+  const submit = () => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      resetForm();
+      return;
+    }
+    onAdd({
+      name: trimmed,
+      currentKm: currentKm ? parseFloat(currentKm) : null,
+      lastServiceOdometer: lastServiceKm ? parseFloat(lastServiceKm) : currentKm ? parseFloat(currentKm) : 0,
+      serviceIntervalKm: interval ? parseInt(interval, 10) : DEFAULT_INTERVAL
+    });
+    resetForm();
+  };
+  const handleDelete = (v, e) => {
+    e.stopPropagation();
+    if (vehicles.length <= 1) {
+      alert("חייב להישאר לפחות רכב אחד.");
+      return;
+    }
+    if (!confirm(`למחוק את "${v.name}"?`)) return;
+    const wipeEntries = confirm(`למחוק גם את כל התדלוקים ששויכו ל"${v.name}"?\n\nאישור = מחק גם אותם לצמיתות\nביטול = השאר אותם שמורים (רק הסר את הרכב מהרשימה)`);
+    onDelete(v.id, wipeEntries);
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      flexDirection: "column",
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8,
+      overflowX: "auto",
+      paddingBottom: 2
+    }
+  }, vehicles.map(v => /*#__PURE__*/React.createElement("button", {
+    key: v.id,
+    onClick: () => onSelect(v.id),
+    style: {
+      flexShrink: 0,
+      display: "flex",
+      alignItems: "center",
+      gap: 6,
+      padding: "6px 8px 6px 12px",
+      borderRadius: 999,
+      fontSize: 12,
+      fontWeight: 600,
+      border: v.id === activeId ? "1px solid #f59e0b" : "1px solid #27272a",
+      background: v.id === activeId ? "#f59e0b1a" : "#18181b",
+      color: v.id === activeId ? "#fbbf24" : "#a1a1aa",
+      cursor: "pointer"
+    }
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "car",
+    size: 13,
+    className: ""
+  }), v.name, /*#__PURE__*/React.createElement("span", {
+    onClick: e => handleDelete(v, e),
+    style: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      width: 16,
+      height: 16,
+      borderRadius: 999,
+      color: "#52525b"
+    }
+  }, "\u2715"))), !adding && /*#__PURE__*/React.createElement("button", {
+    onClick: () => setAdding(true),
+    style: {
+      flexShrink: 0,
+      display: "flex",
+      alignItems: "center",
+      gap: 4,
+      padding: "6px 12px",
+      borderRadius: 999,
+      fontSize: 12,
+      fontWeight: 600,
+      border: "1px dashed #3f3f46",
+      background: "none",
+      color: "#71717a",
+      cursor: "pointer"
+    }
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "plus",
+    size: 12,
+    className: ""
+  }), " \u05E8\u05DB\u05D1")), adding && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "#18181b",
+      border: "1px solid #27272a",
+      borderRadius: 14,
+      padding: 14,
+      display: "flex",
+      flexDirection: "column",
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 12,
+      fontWeight: 600,
+      color: "#e4e4e7",
+      margin: 0
+    }
+  }, "\u05E8\u05DB\u05D1 \u05D7\u05D3\u05E9"), /*#__PURE__*/React.createElement("input", {
+    autoFocus: true,
+    value: name,
+    onChange: e => setName(e.target.value),
+    placeholder: "\u05E9\u05DD \u05D4\u05E8\u05DB\u05D1 (\u05DC\u05DE\u05E9\u05DC: \u05D9\u05D5\u05E0\u05D3\u05D0\u05D9 i20)",
+    style: miniInputStyle
+  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: miniLabelStyle
+  }, "\u05E7\u05D9\u05DC\u05D5\u05DE\u05D8\u05E8\u05D0\u05D6' \u05E0\u05D5\u05DB\u05D7\u05D9 (\u05E8\u05E9\u05D5\u05EA)"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    inputMode: "decimal",
+    value: currentKm,
+    onChange: e => setCurrentKm(e.target.value),
+    placeholder: "\u05DC\u05D3\u05D5\u05D2\u05DE\u05D4: 45000",
+    style: miniInputStyle
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: miniLabelStyle
+  }, "\u05E7\"\u05DE \u05D1\u05D8\u05D9\u05E4\u05D5\u05DC \u05D4\u05D0\u05D7\u05E8\u05D5\u05DF (\u05E8\u05E9\u05D5\u05EA, \u05D0\u05DD \u05E9\u05D5\u05E0\u05D4 \u05DE\u05D4\u05E0\u05D5\u05DB\u05D7\u05D9)"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    inputMode: "decimal",
+    value: lastServiceKm,
+    onChange: e => setLastServiceKm(e.target.value),
+    placeholder: "\u05DC\u05D3\u05D5\u05D2\u05DE\u05D4: 40000",
+    style: miniInputStyle
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: miniLabelStyle
+  }, "\u05DB\u05DC \u05DB\u05DE\u05D4 \u05E7\"\u05DE \u05D8\u05D9\u05E4\u05D5\u05DC"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    inputMode: "decimal",
+    value: interval,
+    onChange: e => setIntervalVal(e.target.value),
+    style: miniInputStyle
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 8,
+      marginTop: 4
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: submit,
+    style: {
+      flex: 1,
+      background: "#f59e0b",
+      color: "#09090b",
+      border: "none",
+      borderRadius: 10,
+      padding: "8px 0",
+      fontSize: 12,
+      fontWeight: 700,
+      cursor: "pointer"
+    }
+  }, "\u05E9\u05DE\u05D5\u05E8 \u05E8\u05DB\u05D1"), /*#__PURE__*/React.createElement("button", {
+    onClick: resetForm,
+    style: {
+      flex: 1,
+      background: "none",
+      color: "#a1a1aa",
+      border: "1px solid #27272a",
+      borderRadius: 10,
+      padding: "8px 0",
+      fontSize: 12,
+      cursor: "pointer"
+    }
+  }, "\u05D1\u05D9\u05D8\u05D5\u05DC"))));
+}
+const miniInputStyle = {
+  width: "100%",
+  background: "#09090b",
+  border: "1px solid #3f3f46",
+  borderRadius: 8,
+  padding: "7px 10px",
+  fontSize: 12,
+  color: "#f4f4f5",
+  outline: "none"
+};
+const miniLabelStyle = {
+  display: "block",
+  fontSize: 10,
+  color: "#71717a",
+  marginBottom: 3
+};
+function MaintenanceCard({
+  vehicle,
+  lastOdometer,
+  onUpdateVehicle
+}) {
+  const [editingInterval, setEditingInterval] = useState(false);
+  const [intervalInput, setIntervalInput] = useState(String(vehicle.serviceIntervalKm));
+  const [editingLastService, setEditingLastService] = useState(false);
+  const [lastServiceInput, setLastServiceInput] = useState(String(vehicle.lastServiceOdometer));
+  useEffect(() => {
+    setIntervalInput(String(vehicle.serviceIntervalKm));
+  }, [vehicle.serviceIntervalKm]);
+  useEffect(() => {
+    setLastServiceInput(String(vehicle.lastServiceOdometer));
+  }, [vehicle.lastServiceOdometer]);
+  if (lastOdometer === null) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: "#18181b",
+        border: "1px solid #27272a",
+        borderRadius: 18,
+        padding: "16px 18px"
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement(Icon, {
+      name: "wrench",
+      size: 15,
+      className: ""
+    }), /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 13,
+        fontWeight: 600,
+        color: "#e4e4e7",
+        margin: 0
+      }
+    }, "\u05EA\u05D6\u05DB\u05D5\u05E8\u05EA \u05D8\u05D9\u05E4\u05D5\u05DC")), /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 11,
+        color: "#52525b",
+        margin: "6px 0 0"
+      }
+    }, "\u05D4\u05D6\u05DF \u05EA\u05D3\u05DC\u05D5\u05E7 \u05E8\u05D0\u05E9\u05D5\u05DF \u05DB\u05D3\u05D9 \u05DC\u05D4\u05EA\u05D7\u05D9\u05DC \u05DC\u05E2\u05E7\u05D5\u05D1."));
+  }
+  const sinceService = lastOdometer - vehicle.lastServiceOdometer;
+  const remaining = vehicle.serviceIntervalKm - sinceService;
+  const overdue = remaining <= 0;
+  const ratio = Math.min(1, Math.max(0, sinceService / vehicle.serviceIntervalKm));
+  const barColor = overdue ? "#fb7185" : ratio > 0.85 ? "#fbbf24" : "#34d399";
+  const commitInterval = () => {
+    const n = parseInt(intervalInput, 10);
+    if (!isNaN(n) && n > 0) onUpdateVehicle(vehicle.id, {
+      serviceIntervalKm: n
+    });
+    setEditingInterval(false);
+  };
+  const markServiced = () => {
+    onUpdateVehicle(vehicle.id, {
+      lastServiceOdometer: lastOdometer
+    });
+  };
+  const commitLastService = () => {
+    const n = parseInt(lastServiceInput, 10);
+    if (!isNaN(n) && n >= 0) onUpdateVehicle(vehicle.id, {
+      lastServiceOdometer: n
+    });
+    setEditingLastService(false);
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "#18181b",
+      border: "1px solid #27272a",
+      borderRadius: 18,
+      padding: "16px 18px",
+      display: "flex",
+      flexDirection: "column",
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "wrench",
+    size: 15,
+    className: ""
+  }), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 13,
+      fontWeight: 600,
+      color: "#e4e4e7",
+      margin: 0
+    }
+  }, "\u05EA\u05D6\u05DB\u05D5\u05E8\u05EA \u05D8\u05D9\u05E4\u05D5\u05DC")), /*#__PURE__*/React.createElement("button", {
+    onClick: markServiced,
+    style: {
+      fontSize: 11,
+      color: "#71717a",
+      background: "none",
+      border: "1px solid #27272a",
+      borderRadius: 8,
+      padding: "4px 8px",
+      cursor: "pointer"
+    }
+  }, "\u05D1\u05D5\u05E6\u05E2 \u05D8\u05D9\u05E4\u05D5\u05DC \u05E2\u05DB\u05E9\u05D9\u05D5")), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: overdue ? 14 : 13,
+      fontWeight: 700,
+      color: barColor,
+      margin: 0
+    }
+  }, overdue ? `עברת ב-${Math.abs(remaining).toLocaleString("he-IL")} ק"מ את מועד הטיפול` : `עוד ${remaining.toLocaleString("he-IL")} ק"מ לטיפול הבא`), /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: 6,
+      borderRadius: 999,
+      background: "#27272a",
+      overflow: "hidden"
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: "100%",
+      width: `${ratio * 100}%`,
+      background: barColor,
+      transition: "width 500ms ease"
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      color: "#52525b"
+    }
+  }, "\u05DE\u05E8\u05D5\u05D5\u05D7 \u05D8\u05D9\u05E4\u05D5\u05DC\u05D9\u05DD"), editingInterval ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 4
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    autoFocus: true,
+    type: "number",
+    value: intervalInput,
+    onChange: e => setIntervalInput(e.target.value),
+    onKeyDown: e => e.key === "Enter" && commitInterval(),
+    onBlur: commitInterval,
+    style: {
+      width: 70,
+      background: "#09090b",
+      border: "1px solid #3f3f46",
+      borderRadius: 6,
+      padding: "2px 6px",
+      fontSize: 11,
+      color: "#f4f4f5",
+      outline: "none"
+    }
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      color: "#52525b"
+    }
+  }, "\u05E7\"\u05DE")) : /*#__PURE__*/React.createElement("button", {
+    onClick: () => setEditingInterval(true),
+    style: {
+      background: "none",
+      border: "none",
+      color: "#a1a1aa",
+      fontSize: 11,
+      cursor: "pointer",
+      textDecoration: "underline"
+    }
+  }, "\u05DB\u05DC ", vehicle.serviceIntervalKm.toLocaleString("he-IL"), " \u05E7\"\u05DE")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between"
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      color: "#52525b"
+    }
+  }, "\u05E7\"\u05DE \u05D1\u05D8\u05D9\u05E4\u05D5\u05DC \u05D4\u05D0\u05D7\u05E8\u05D5\u05DF"), editingLastService ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      gap: 4
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    autoFocus: true,
+    type: "number",
+    value: lastServiceInput,
+    onChange: e => setLastServiceInput(e.target.value),
+    onKeyDown: e => e.key === "Enter" && commitLastService(),
+    onBlur: commitLastService,
+    style: {
+      width: 80,
+      background: "#09090b",
+      border: "1px solid #3f3f46",
+      borderRadius: 6,
+      padding: "2px 6px",
+      fontSize: 11,
+      color: "#f4f4f5",
+      outline: "none"
+    }
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      color: "#52525b"
+    }
+  }, "\u05E7\"\u05DE")) : /*#__PURE__*/React.createElement("button", {
+    onClick: () => setEditingLastService(true),
+    style: {
+      background: "none",
+      border: "none",
+      color: "#a1a1aa",
+      fontSize: 11,
+      cursor: "pointer",
+      textDecoration: "underline"
+    }
+  }, vehicle.lastServiceOdometer.toLocaleString("he-IL"), " \u05E7\"\u05DE")));
+}
+function MonthlyTrendChart({
+  byMonth,
+  monthKeys
+}) {
+  const [grown, setGrown] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setGrown(true), 80);
+    return () => clearTimeout(t);
+  }, []);
+  const chronological = [...monthKeys].reverse().slice(-6);
+  if (chronological.length < 2) return null;
+  const maxDistance = Math.max(1, ...chronological.map(k => byMonth[k].distance));
+  const CHART_H = 120;
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: "#18181b",
+      border: "1px solid #27272a",
+      borderRadius: 18,
+      padding: "18px 16px 14px"
+    }
+  }, /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 13,
+      fontWeight: 600,
+      color: "#e4e4e7",
+      margin: "0 0 14px"
+    }
+  }, "\u05DE\u05D2\u05DE\u05EA \u05E0\u05E1\u05D9\u05E2\u05D4 \u05D7\u05D5\u05D3\u05E9\u05D9\u05EA"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: "flex",
+      alignItems: "flex-end",
+      justifyContent: "space-between",
+      gap: 8,
+      height: CHART_H
+    }
+  }, chronological.map((key, i) => {
+    const dist = byMonth[key].distance;
+    const ratio = dist / maxDistance;
+    const barH = Math.max(4, ratio * (CHART_H - 34));
+    const [, m] = key.split("-").map(Number);
+    const isLast = i === chronological.length - 1;
+    return /*#__PURE__*/React.createElement("div", {
+      key: key,
+      style: {
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        flex: 1,
+        height: "100%",
+        justifyContent: "flex-end"
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        color: isLast ? "#fbbf24" : "#71717a",
+        fontFamily: "ui-monospace, monospace",
+        marginBottom: 4
+      }
+    }, dist > 0 ? dist.toLocaleString("he-IL") : ""), /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: "100%",
+        maxWidth: 26,
+        borderRadius: "6px 6px 3px 3px",
+        height: grown ? barH : 0,
+        transition: `height 700ms cubic-bezier(0.22, 1, 0.36, 1) ${i * 70}ms`,
+        background: isLast ? "linear-gradient(180deg, #fbbf24 0%, #f59e0b 100%)" : "linear-gradient(180deg, #52525b 0%, #3f3f46 100%)",
+        boxShadow: isLast ? "0 0 12px 0 #f59e0b55" : "none"
+      }
+    }), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        color: "#52525b",
+        marginTop: 6
+      }
+    }, HEB_MONTHS[m - 1].slice(0, 3)));
+  })));
+}
 function FuelTracker() {
-  const [entries, setEntries] = useState(() => loadEntries());
+  const initial = useMemo(() => migrate(), []);
+  const buildDateLabel = useMemo(() => {
+    try {
+      const raw = typeof window !== "undefined" ? window.__APP_VERSION__ : null;
+      if (!raw) return "";
+      return new Date(raw).toLocaleDateString("he-IL", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric"
+      });
+    } catch (e) {
+      return "";
+    }
+  }, []);
+  const [allEntries, setAllEntries] = useState(initial.entries);
+  const [vehicles, setVehicles] = useState(initial.vehicles);
+  const [activeVehicleId, setActiveVehicleId] = useState(initial.activeId);
   const [odometer, setOdometer] = useState("");
   const [liters, setLiters] = useState("");
   const [price, setPrice] = useState("");
@@ -149,6 +760,8 @@ function FuelTracker() {
   const [notice, setNotice] = useState("");
   const [openMonths, setOpenMonths] = useState({});
   const fileInputRef = React.useRef(null);
+  const activeVehicle = vehicles.find(v => v.id === activeVehicleId) || vehicles[0];
+  const entries = useMemo(() => allEntries.filter(e => e.vehicleId === activeVehicleId), [allEntries, activeVehicleId]);
   const sorted = useMemo(() => [...entries].sort((a, b) => a.odometer - b.odometer), [entries]);
   const withDistance = useMemo(() => sorted.map((e, i) => ({
     ...e,
@@ -183,8 +796,8 @@ function FuelTracker() {
   const efficiency = current.liters > 0 ? current.distance / current.liters : 0;
   const costPerKm = current.distance > 0 ? current.cost / current.distance : 0;
   const lastOdometer = sorted.length ? sorted[sorted.length - 1].odometer : null;
-  const persist = next => {
-    setEntries(next);
+  const persistEntries = next => {
+    setAllEntries(next);
     try {
       saveEntries(next);
       setError("");
@@ -193,6 +806,51 @@ function FuelTracker() {
     } catch (e) {
       setError("השמירה נכשלה: " + (e && e.message ? e.message : "שגיאה לא ידועה"));
     }
+  };
+  const updateVehicle = (id, patch) => {
+    const next = vehicles.map(v => v.id === id ? {
+      ...v,
+      ...patch
+    } : v);
+    setVehicles(next);
+    saveVehicles(next);
+  };
+  const addVehicle = ({
+    name,
+    currentKm,
+    lastServiceOdometer,
+    serviceIntervalKm
+  }) => {
+    const id = `v${Date.now()}`;
+    const next = [...vehicles, {
+      id,
+      name,
+      serviceIntervalKm: serviceIntervalKm || DEFAULT_INTERVAL,
+      lastServiceOdometer: lastServiceOdometer || 0,
+      initialOdometerHint: currentKm || null
+    }];
+    setVehicles(next);
+    saveVehicles(next);
+    setActiveVehicleId(id);
+    localStorage.setItem(ACTIVE_VEHICLE_KEY, id);
+  };
+  const deleteVehicle = (id, wipeEntries) => {
+    const next = vehicles.filter(v => v.id !== id);
+    setVehicles(next);
+    saveVehicles(next);
+    if (wipeEntries) {
+      const remainingEntries = allEntries.filter(e => e.vehicleId !== id);
+      persistEntries(remainingEntries);
+    }
+    if (activeVehicleId === id) {
+      const fallback = next[0].id;
+      setActiveVehicleId(fallback);
+      localStorage.setItem(ACTIVE_VEHICLE_KEY, fallback);
+    }
+  };
+  const selectVehicle = id => {
+    setActiveVehicleId(id);
+    localStorage.setItem(ACTIVE_VEHICLE_KEY, id);
   };
   const handleSubmit = () => {
     setError("");
@@ -215,25 +873,29 @@ function FuelTracker() {
       setError(`הק"מ חייב להיות גדול מהתדלוק הקודם (${lastOdometer.toLocaleString("he-IL")} ק"מ).`);
       return;
     }
-    const next = [...entries, {
+    const next = [...allEntries, {
       id: `${Date.now()}`,
       date: new Date().toISOString(),
       odometer: odoNum,
       liters: litNum,
-      price: priceNum || null
+      price: priceNum || null,
+      vehicleId: activeVehicleId
     }];
-    persist(next);
+    persistEntries(next);
     setOdometer("");
     setLiters("");
     setPrice("");
   };
-  const handleDelete = id => persist(entries.filter(e => e.id !== id));
+  const handleDelete = id => persistEntries(allEntries.filter(e => e.id !== id));
   const toggleMonth = key => setOpenMonths(p => ({
     ...p,
     [key]: !p[key]
   }));
   const handleExport = () => {
-    const blob = new Blob([JSON.stringify(entries, null, 2)], {
+    const blob = new Blob([JSON.stringify({
+      entries: allEntries,
+      vehicles
+    }, null, 2)], {
       type: "application/json"
     });
     const url = URL.createObjectURL(blob);
@@ -250,13 +912,26 @@ function FuelTracker() {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const imported = JSON.parse(reader.result);
-        if (!Array.isArray(imported)) throw new Error("קובץ לא תקין");
+        const parsed = JSON.parse(reader.result);
+        const importedEntries = Array.isArray(parsed) ? parsed : parsed.entries || [];
+        const importedVehicles = Array.isArray(parsed) ? [] : parsed.vehicles || [];
+        if (!Array.isArray(importedEntries)) throw new Error("קובץ לא תקין");
         const byId = {};
-        [...entries, ...imported].forEach(e => {
-          byId[e.id] = e;
+        [...allEntries, ...importedEntries].forEach(e => {
+          byId[e.id] = e.vehicleId ? e : {
+            ...e,
+            vehicleId: activeVehicleId
+          };
         });
-        persist(Object.values(byId));
+        const mergedEntries = Object.values(byId);
+        const vById = {};
+        [...vehicles, ...importedVehicles].forEach(v => {
+          vById[v.id] = v;
+        });
+        const mergedVehicles = Object.values(vById);
+        persistEntries(mergedEntries);
+        setVehicles(mergedVehicles.length ? mergedVehicles : vehicles);
+        saveVehicles(mergedVehicles.length ? mergedVehicles : vehicles);
       } catch (e) {
         setError("ייבוא נכשל: הקובץ אינו בפורמט תקין.");
       }
@@ -309,7 +984,13 @@ function FuelTracker() {
       color: "#71717a",
       margin: "2px 0 0"
     }
-  }, "\u05DE\u05E2\u05E7\u05D1 \u05EA\u05D3\u05DC\u05D5\u05E7\u05D9\u05DD \u05D5\u05E6\u05E8\u05D9\u05DB\u05EA \u05D3\u05DC\u05E7 \u05D7\u05D5\u05D3\u05E9\u05D9\u05EA"))), /*#__PURE__*/React.createElement("div", {
+  }, "\u05DE\u05E2\u05E7\u05D1 \u05EA\u05D3\u05DC\u05D5\u05E7\u05D9\u05DD \u05D5\u05E6\u05E8\u05D9\u05DB\u05EA \u05D3\u05DC\u05E7 \u05D7\u05D5\u05D3\u05E9\u05D9\u05EA"))), /*#__PURE__*/React.createElement(VehicleSwitcher, {
+    vehicles: vehicles,
+    activeId: activeVehicleId,
+    onSelect: selectVehicle,
+    onAdd: addVehicle,
+    onDelete: deleteVehicle
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "#000",
       borderRadius: 18,
@@ -371,7 +1052,9 @@ function FuelTracker() {
       margin: 0,
       fontVariantNumeric: "tabular-nums"
     }
-  }, current.cost > 0 ? `₪${current.cost.toLocaleString("he-IL", { maximumFractionDigits: 0 })}` : "—"))), /*#__PURE__*/React.createElement("div", {
+  }, current.cost > 0 ? `₪${current.cost.toLocaleString("he-IL", {
+    maximumFractionDigits: 0
+  })}` : "—"))), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 16,
       paddingTop: 16,
@@ -403,13 +1086,17 @@ function FuelTracker() {
       fontSize: 10,
       color: "#71717a"
     }
-  }, "\u05E2\u05DC\u05D5\u05EA \u05DC\u05E7\u05F4\u05DE"), /*#__PURE__*/React.createElement("span", {
+  }, "\u05E2\u05DC\u05D5\u05EA \u05DC\u05E7\"\u05DE"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontFamily: "ui-monospace, monospace",
       fontSize: 13,
       color: "#a1a1aa"
     }
-  }, `₪${costPerKm.toFixed(2)} / ק"מ`))), /*#__PURE__*/React.createElement("div", {
+  }, `₪${costPerKm.toFixed(2)} / ק"מ`))), activeVehicle && /*#__PURE__*/React.createElement(MaintenanceCard, {
+    vehicle: activeVehicle,
+    lastOdometer: lastOdometer !== null ? lastOdometer : activeVehicle.initialOdometerHint || null,
+    onUpdateVehicle: updateVehicle
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       background: "#18181b",
       border: "1px solid #27272a",
@@ -500,7 +1187,10 @@ function FuelTracker() {
     name: "plus",
     size: 16,
     className: ""
-  }), " \u05E9\u05DE\u05D5\u05E8 \u05EA\u05D3\u05DC\u05D5\u05E7")), /*#__PURE__*/React.createElement("div", {
+  }), " \u05E9\u05DE\u05D5\u05E8 \u05EA\u05D3\u05DC\u05D5\u05E7")), /*#__PURE__*/React.createElement(MonthlyTrendChart, {
+    byMonth: byMonth,
+    monthKeys: monthKeys
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       display: "flex",
       flexDirection: "column",
@@ -519,7 +1209,7 @@ function FuelTracker() {
       color: "#52525b",
       margin: "0 0 0 4px"
     }
-  }, "\u05E2\u05D3\u05D9\u05D9\u05DF \u05D0\u05D9\u05DF \u05EA\u05D3\u05DC\u05D5\u05E7\u05D9\u05DD \u05E9\u05DE\u05D5\u05E8\u05D9\u05DD."), monthKeys.map(key => {
+  }, "\u05E2\u05D3\u05D9\u05D9\u05DF \u05D0\u05D9\u05DF \u05EA\u05D3\u05DC\u05D5\u05E7\u05D9\u05DD \u05E9\u05DE\u05D5\u05E8\u05D9\u05DD \u05DC\u05E8\u05DB\u05D1 \u05D4\u05D6\u05D4."), monthKeys.map(key => {
     const m = byMonth[key];
     const eff = m.liters > 0 ? m.distance / m.liters : 0;
     const isOpen = !!openMonths[key];
@@ -560,7 +1250,9 @@ function FuelTracker() {
         color: "#71717a",
         margin: "2px 0 0"
       }
-    }, m.distance.toLocaleString("he-IL"), " \u05E7\u05F4\u05DE \xB7 ", m.liters.toLocaleString("he-IL"), " \u05DC\u05D9\u05D8\u05E8", eff > 0 && ` · ${eff.toFixed(1)} ק"מ/ל`, m.cost > 0 && ` · ₪${m.cost.toLocaleString("he-IL", { maximumFractionDigits: 0 })}`)), /*#__PURE__*/React.createElement("span", {
+    }, m.distance.toLocaleString("he-IL"), " \u05E7\u05F4\u05DE \xB7 ", m.liters.toLocaleString("he-IL"), " \u05DC\u05D9\u05D8\u05E8", eff > 0 && ` · ${eff.toFixed(1)} ק"מ/ל`, m.cost > 0 && ` · ₪${m.cost.toLocaleString("he-IL", {
+      maximumFractionDigits: 0
+    })}`)), /*#__PURE__*/React.createElement("span", {
       style: {
         color: "#71717a"
       }
@@ -641,7 +1333,15 @@ function FuelTracker() {
       textAlign: "center",
       margin: 0
     }
-  }, "\u05D4\u05E0\u05EA\u05D5\u05E0\u05D9\u05DD \u05E0\u05E9\u05DE\u05E8\u05D9\u05DD \u05E8\u05E7 \u05E2\u05DC \u05D4\u05DE\u05DB\u05E9\u05D9\u05E8 \u05D4\u05D6\u05D4. \u05D0\u05E4\u05E9\u05E8 \u05DC\u05D2\u05D1\u05D5\u05EA \u05D5\u05DC\u05E9\u05D7\u05D6\u05E8 \u05D1\u05D9\u05DF \u05DE\u05DB\u05E9\u05D9\u05E8\u05D9\u05DD \u05D3\u05E8\u05DA \u05D4\u05DB\u05E4\u05EA\u05D5\u05E8\u05D9\u05DD \u05DC\u05DE\u05E2\u05DC\u05D4.")));
+  }, "\u05D4\u05E0\u05EA\u05D5\u05E0\u05D9\u05DD \u05E0\u05E9\u05DE\u05E8\u05D9\u05DD \u05E8\u05E7 \u05E2\u05DC \u05D4\u05DE\u05DB\u05E9\u05D9\u05E8 \u05D4\u05D6\u05D4. \u05D0\u05E4\u05E9\u05E8 \u05DC\u05D2\u05D1\u05D5\u05EA \u05D5\u05DC\u05E9\u05D7\u05D6\u05E8 \u05D1\u05D9\u05DF \u05DE\u05DB\u05E9\u05D9\u05E8\u05D9\u05DD \u05D3\u05E8\u05DA \u05D4\u05DB\u05E4\u05EA\u05D5\u05E8\u05D9\u05DD \u05DC\u05DE\u05E2\u05DC\u05D4."), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 10,
+      color: "#3f3f46",
+      textAlign: "center",
+      margin: 0,
+      fontFamily: "ui-monospace, monospace"
+    }
+  }, "\u05DE\u05D3 \u05D3\u05DC\u05E7 \xB7 \u05D2\u05E8\u05E1\u05D4 ", APP_SEMVER, buildDateLabel ? ` · עודכן ${buildDateLabel}` : "")));
 }
 const inputStyle = {
   width: "100%",
@@ -686,7 +1386,6 @@ const secondaryButtonStyle = {
 ReactDOM.createRoot(document.getElementById("root")).render(/*#__PURE__*/React.createElement(FuelTracker, null));
 
 </script>
-
 <script>
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
@@ -694,5 +1393,55 @@ ReactDOM.createRoot(document.getElementById("root")).render(/*#__PURE__*/React.c
     });
   }
 </script>
+<script>
+  (function () {
+    function showUpdateBanner(onRefresh) {
+      if (document.getElementById("update-banner")) return;
+      const bar = document.createElement("div");
+      bar.id = "update-banner";
+      bar.style.cssText =
+        "position:fixed;left:0;right:0;bottom:0;z-index:9999;" +
+        "background:#f59e0b;color:#09090b;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;" +
+        "padding:12px 16px;display:flex;align-items:center;justify-content:space-between;gap:12px;" +
+        "box-shadow:0 -4px 16px rgba(0,0,0,0.35);direction:rtl;font-size:14px;font-weight:600;";
+      bar.innerHTML =
+        '<span>יש גרסה חדשה זמינה</span>' +
+        '<button id="update-banner-btn" style="background:#09090b;color:#f59e0b;border:none;' +
+        'border-radius:10px;padding:8px 14px;font-weight:700;font-size:13px;cursor:pointer;">רענן עכשיו</button>';
+      document.body.appendChild(bar);
+      document.getElementById("update-banner-btn").addEventListener("click", onRefresh);
+    }
+
+    const CURRENT_VERSION = window.__APP_VERSION__ || "";
+    let checking = false;
+
+    async function checkForUpdate() {
+      if (checking || document.getElementById("update-banner")) return;
+      checking = true;
+      try {
+        const res = await fetch("./index.html", { cache: "no-store" });
+        const text = await res.text();
+        const match = text.match(/__APP_VERSION__\s*=\s*"([^"]+)"/);
+        const remoteVersion = match ? match[1] : null;
+        if (remoteVersion && CURRENT_VERSION && remoteVersion !== CURRENT_VERSION) {
+          showUpdateBanner(() => window.location.reload());
+        }
+      } catch (e) {
+        // offline or network error — ignore, try again later
+      } finally {
+        checking = false;
+      }
+    }
+
+    window.addEventListener("load", () => {
+      checkForUpdate();
+      setInterval(checkForUpdate, 60000); // re-check every minute while open
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) checkForUpdate();
+    });
+  })();
+</script>
+
 </body>
 </html>
