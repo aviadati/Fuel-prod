@@ -905,6 +905,33 @@ function FuelTracker() {
     a.click();
     URL.revokeObjectURL(url);
   };
+  const handleExportCsv = () => {
+    const vehicleName = id => (vehicles.find(v => v.id === id) || {}).name || "";
+    const rows = [["\u05EA\u05D0\u05E8\u05D9\u05DA", "\u05E8\u05DB\u05D1", "\u05E7\u05E8\u05D9\u05D0\u05EA \u05E7\u05F4\u05DE", "\u05DC\u05D9\u05D8\u05E8\u05D9\u05DD", "\u05DE\u05D7\u05D9\u05E8 \u05DC\u05DC\u05D9\u05D8\u05E8", "\u05E2\u05DC\u05D5\u05EA", "\u05DE\u05E8\u05D7\u05E7 \u05DE\u05D4\u05EA\u05D3\u05DC\u05D5\u05E7 \u05D4\u05E7\u05D5\u05D3\u05DD"]];
+    const byVehicle = {};
+    allEntries.forEach(e => {
+      if (!byVehicle[e.vehicleId]) byVehicle[e.vehicleId] = [];
+      byVehicle[e.vehicleId].push(e);
+    });
+    Object.keys(byVehicle).forEach(vid => {
+      const list = byVehicle[vid].slice().sort((a, b) => a.odometer - b.odometer);
+      list.forEach((e, i) => {
+        const dist = i === 0 ? 0 : e.odometer - list[i - 1].odometer;
+        const cost = e.price ? (e.liters * e.price).toFixed(2) : "";
+        rows.push([formatDate(e.date), vehicleName(e.vehicleId), e.odometer, e.liters, e.price || "", cost, dist]);
+      });
+    });
+    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\r\n");
+    const blob = new Blob(["\uFEFF" + csv], {
+      type: "text/csv;charset=utf-8;"
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `fuel-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
   const handleImportClick = () => fileInputRef.current && fileInputRef.current.click();
   const handleImportFile = ev => {
     const file = ev.target.files[0];
@@ -1312,6 +1339,13 @@ function FuelTracker() {
     size: 14,
     className: ""
   }), " \u05D2\u05D9\u05D1\u05D5\u05D9 (\u05D9\u05D9\u05E6\u05D5\u05D0)"), /*#__PURE__*/React.createElement("button", {
+    onClick: handleExportCsv,
+    style: secondaryButtonStyle
+  }, /*#__PURE__*/React.createElement(Icon, {
+    name: "download",
+    size: 14,
+    className: ""
+  }), " \u05D9\u05D9\u05E6\u05D5\u05D0 \u05DC-CSV"), /*#__PURE__*/React.createElement("button", {
     onClick: handleImportClick,
     style: secondaryButtonStyle
   }, /*#__PURE__*/React.createElement(Icon, {
